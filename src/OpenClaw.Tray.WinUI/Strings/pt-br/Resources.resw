@@ -7170,4 +7170,6 @@ O binário wxc-exec não pôde ser localizado. {1} Se esta for uma build de dese
   <data name="VoiceSettingsPage_MiniMaxVoiceIdBox.Header" xml:space="preserve"><value>ID da voz</value></data>
   <data name="VoiceSettingsPage_MiniMaxVoiceIdBox.PlaceholderText" xml:space="preserve"><value>por exemplo, male-qn-qingse</value></data>
   <data name="VoiceSettingsPage_TtsMiniMax.Content" xml:space="preserve"><value>MiniMax (nuvem, requer chave da API)</value></data>
+  <data name="VoiceSettingsPage_TtsGateway.Content" xml:space="preserve"><value>Gateway (usa o provedor do Gateway ativo)</value></data>
+  <data name="VoiceSettingsPage_TtsGatewayInfo.Text" xml:space="preserve"><value>A fala do Gateway usa o provedor configurado no Gateway ativo. Nenhuma chave de API é armazenada neste PC. Conecte-se ao Gateway antes da reprodução.</value></data>
 </root>
