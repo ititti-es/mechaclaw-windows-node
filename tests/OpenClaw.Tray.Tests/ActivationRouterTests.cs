@@ -18,6 +18,46 @@ public class ActivationRouterTests
 
     private static ActivationRouter CreateRouter() => new(Scheme, UniquePipeName());
 
+    [Fact]
+    public async Task MigrationShutdown_UsesCurrentUserIpcWithoutCreatingADeepLinkRoute()
+    {
+        var name = UniquePipeName();
+        var requested = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        await using var listener = new ActivationRouter(Scheme, name, () => requested.TrySetResult());
+        await using var sender = new ActivationRouter(Scheme, name);
+        var sink = new FakeSink();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await listener.StartForwardedActivationListenerAsync(sink, timeout.Token);
+        Assert.True(await sender.RequestMigrationShutdownAsync(timeout.Token));
+        await requested.Task.WaitAsync(timeout.Token);
+        Assert.Empty(sink.Dispatched);
+        Assert.IsType<ActivationPlan.Ignore>(listener.PlanLaunch(Input(
+            protocolUri: "openclaw://migration-shutdown")));
+    }
+
+    [Fact]
+    public async Task MigrationShutdown_MissingListenerReturnsManualFallback()
+    {
+        await using var sender = CreateRouter();
+        Assert.False(await sender.RequestMigrationShutdownAsync(CancellationToken.None));
+    }
+
+    [Fact]
+    public async Task MigrationShutdown_DisabledReceiverDoesNotDisruptSubsequentActivation()
+    {
+        var name = UniquePipeName();
+        await using var listener = new ActivationRouter(Scheme, name);
+        await using var sender = new ActivationRouter(Scheme, name);
+        var sink = new FakeSink();
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        await listener.StartForwardedActivationListenerAsync(sink, timeout.Token);
+        Assert.True(await sender.RequestMigrationShutdownAsync(timeout.Token));
+        Assert.True(await ForwardWithRetryAsync(sender, "openclaw://settings", timeout.Token));
+        while (sink.Dispatched.Count == 0)
+            await Task.Delay(10, timeout.Token);
+        Assert.IsType<ActivationRoute.OpenHub>(Assert.Single(sink.Dispatched));
+    }
+
     private sealed class FakeSink : IActivationPlanSink
     {
         public List<ActivationRoute> Dispatched { get; } = new();
@@ -120,6 +160,25 @@ public class ActivationRouterTests
         var dispatch = Assert.IsType<ActivationPlan.Dispatch>(plan);
         var route = Assert.IsType<ActivationRoute.OpenHub>(dispatch.Route);
         Assert.Equal("chat", route.Page);
+    }
+
+    [Theory]
+    [InlineData("settings", "settings")]
+    [InlineData("SETTINGS", "settings")]
+    [InlineData("connection", "connection")]
+    [InlineData("CONNECTION", "connection")]
+    public void PlanLaunch_PostSetupWithoutGateway_OpensSettings(string target, string page)
+    {
+        var plan = CreateRouter().PlanLaunch(Input(postSetupLaunch: target));
+        var dispatch = Assert.IsType<ActivationPlan.Dispatch>(plan);
+        Assert.Equal(page, Assert.IsType<ActivationRoute.OpenHub>(dispatch.Route).Page);
+    }
+
+    [Fact]
+    public void PlanLaunch_UnknownPostSetupTarget_IsNotAnActivation()
+    {
+        Assert.IsType<ActivationPlan.Ignore>(
+            CreateRouter().PlanLaunch(Input(postSetupLaunch: "browser")));
     }
 
     [Fact]

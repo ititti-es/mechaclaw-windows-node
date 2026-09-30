@@ -5,6 +5,24 @@ namespace OpenClaw.Tray.Tests;
 public sealed class LocalAiSetupUxContractTests
 {
     [Fact]
+    public void LocalAiSidebar_UsesColorChipAsset()
+    {
+        string root = TestRepositoryPaths.GetRepositoryRoot();
+        string tray = Path.Combine(root, "src", "OpenClaw.Tray.WinUI");
+        string xaml = File.ReadAllText(Path.Combine(tray, "Windows", "HubWindow.xaml"));
+        string svg = File.ReadAllText(Path.Combine(tray, "Assets", "SidebarIcons", "LocalAi.svg"));
+
+        Assert.Contains("x:Key=\"LocalAi_Icon\" UriSource=\"ms-appx:///Assets/SidebarIcons/LocalAi.svg\"", xaml);
+        Assert.Contains(
+            "Tag=\"local-ai\" Content=\"Local AI\">\n" +
+            "                <NavigationViewItem.Icon><ImageIcon Source=\"{StaticResource LocalAi_Icon}\" AutomationProperties.AccessibilityView=\"Raw\"/>",
+            xaml.Replace("\r\n", "\n"));
+        Assert.Contains("viewBox=\"0 0 24 24\"", svg);
+        Assert.Contains("<rect x=\"5\" y=\"5\" width=\"14\" height=\"14\" rx=\"3.75\" fill=\"url(#body)\"/>", svg);
+        Assert.DoesNotContain("<circle", svg);
+    }
+
+    [Fact]
     public void LocalAiSetupProgressAndCompletion_DoNotPromiseInferenceVerification()
     {
         string root = TestRepositoryPaths.GetRepositoryRoot();
@@ -13,10 +31,19 @@ public sealed class LocalAiSetupUxContractTests
         string complete = File.ReadAllText(Path.Combine(pages, "CompletePage.xaml.cs"));
         string completeXaml = File.ReadAllText(Path.Combine(pages, "CompletePage.xaml"));
 
-        Assert.Contains("Prepare Local AI router", progress);
-        Assert.DoesNotContain("capture-local-ai-gpu-baseline", progress);
-        Assert.DoesNotContain("verify-local-ai-inference", progress);
-        Assert.DoesNotContain("verify-local-ai-gpu-load", progress);
+        Assert.Contains("SetupInstallationProgress", progress);
+        // Recovery can show real inference steps. Ordinary installation must not schedule them.
+        var factory = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine", "SetupPipeline.cs"));
+        var defaultsStart = factory.IndexOf("public static List<SetupStep> BuildDefaultSteps()", StringComparison.Ordinal);
+        Assert.True(defaultsStart >= 0, "The default installation step factory must exist.");
+        var defaultsEnd = factory.IndexOf("public sealed class SetupPipeline", defaultsStart, StringComparison.Ordinal);
+        Assert.True(defaultsEnd > defaultsStart, "The pipeline declaration must follow the default step factory.");
+        var defaults = factory[defaultsStart..defaultsEnd];
+        Assert.DoesNotContain("new CaptureLocalAiGpuBaselineStep", defaults);
+        Assert.DoesNotContain("new VerifyLocalAiInferenceStep", defaults);
+        Assert.DoesNotContain("new VerifyLocalAiGpuLoadStep", defaults);
+        Assert.Contains("OnboardingFlowPolicy.BuildInstallationSteps(localAiRecoveryOnly)", progress);
+        Assert.DoesNotContain("Local AI verified", progress);
         Assert.Contains("Local AI installed", complete);
         Assert.Contains("Local AI installed", completeXaml);
         Assert.Contains("The model loads on the first request.", complete);
@@ -43,7 +70,7 @@ public sealed class LocalAiSetupUxContractTests
         Assert.Contains("WelcomeLocalAiAvailable", xaml);
         Assert.Contains("Glyph=\"&#xE73E;\"", xaml);
         Assert.Contains("x:Uid=\"Onboarding_Welcome_LocalAiAvailableBadge\"", xaml);
-        Assert.Contains("Local AI supported", xaml);
+        Assert.Contains("Your PC supports Local AI", xaml);
         Assert.Contains("AutomationProperties.AccessibilityView=\"Raw\"", xaml);
         AssertInOrder(
             xaml,
@@ -94,7 +121,7 @@ public sealed class LocalAiSetupUxContractTests
         string root = TestRepositoryPaths.GetRepositoryRoot();
         string source = File.ReadAllText(Path.Combine(
             root, "src", "OpenClaw.SetupEngine.UI", "Pages", "WelcomePage.xaml.cs"));
-        string method = ExtractMethod(source, "DetectLocalAiAvailabilityAsync");
+        string method = ExtractMethod(source, "private async Task DetectLocalAiAvailabilityAsync");
 
         Assert.Contains("LocalInferenceEligibility.Evaluate(hardware);", method);
         Assert.DoesNotContain("config.LocalAi.SelectedModelId", method);
@@ -108,16 +135,17 @@ public sealed class LocalAiSetupUxContractTests
             root,
             "src",
             "OpenClaw.SetupEngine.UI",
-            "Pages",
-            "CapabilitiesPage.xaml"));
+            "Controls",
+            "LocalAiSetupControl.xaml"));
         string source = File.ReadAllText(Path.Combine(
             root,
             "src",
             "OpenClaw.SetupEngine.UI",
-            "Pages",
-            "CapabilitiesPage.xaml.cs"));
+            "Controls",
+            "LocalAiSetupControl.xaml.cs"));
         string infoBar = ExtractElement(xaml, "LocalAiUnavailablePanel", "</InfoBar>");
-        string networkingInfoBar = ExtractElement(xaml, "LocalAiNetworkingConsentPanel", "</InfoBar>");
+        string networkingSource = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "GatewaySetupDetailPage.xaml.cs"));
+        string networkingXaml = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "GatewaySetupDetailPage.xaml"));
 
         Assert.Contains("Title=\"Local AI is not available\"", xaml);
         Assert.Contains("Severity=\"Informational\"", xaml);
@@ -137,8 +165,8 @@ public sealed class LocalAiSetupUxContractTests
             "x:Name=\"LocalAiUnavailableDetailsButton\"",
             "x:Name=\"LocalAiAvailabilityRecoveryPanel\"",
             "x:Name=\"LocalAiRecheckAvailabilityButton\"",
-            "x:Name=\"LocalAiInstallReviewCard\"",
-            "x:Name=\"LocalAiOptionContent\"");
+            "x:Name=\"LocalAiOptionContent\"",
+            "x:Name=\"LocalAiInstallReviewCard\"");
         Assert.Contains("LocalAiSetupAvailabilityCoordinator", source);
         Assert.Contains("TryApplyProbeFailure", source);
         Assert.Contains("ShowLocalAiProbeUnknown", source);
@@ -165,22 +193,19 @@ public sealed class LocalAiSetupUxContractTests
         Assert.Contains("LocalAiOptionContent.Opacity = isAvailable ? 1 : 0.55", source);
         Assert.Contains("LocalAiToggle.IsEnabled = isAvailable", source);
         Assert.Contains("LocalAiModelSelector.IsEnabled = isAvailable", source);
-        Assert.Contains("LocalAiNetworkingConsentCheckBox.IsEnabled = isAvailable", source);
-        Assert.Contains("Title=\"WSL networking change required\"", networkingInfoBar);
+        Assert.Contains("Title=\"WSL networking change required\"", xaml);
         // Enabling Local AI must never imply consent on its own: the user has to
         // affirmatively accept the global .wslconfig rewrite and one-time WSL shutdown.
-        Assert.Contains("<CheckBox", networkingInfoBar);
-        Assert.Contains("LocalAiNetworkingConsentCheckBox", networkingInfoBar);
+        Assert.Contains("<CheckBox", networkingXaml);
+        Assert.Contains("LocalAiNetworkingConsentCheckBox", networkingXaml);
         Assert.DoesNotContain("config.LocalAi.WslMirroredNetworkingConsent = config.LocalAi.Enabled", source);
         Assert.DoesNotContain("config.LocalAi.WslMirroredNetworkingConsent = true", source);
-        Assert.Contains(
-            "config.LocalAi.WslMirroredNetworkingConsent =\r\n            config.LocalAi.Enabled &&\r\n" +
-            "            _localAiNetworkingConsentRequired &&\r\n" +
-            "            LocalAiNetworkingConsentCheckBox.IsChecked == true;",
-            source);
+        Assert.Contains("_args.Draft.Config.LocalAi.WslMirroredNetworkingConsent = LocalAiNetworkingConsentCheckBox.IsChecked == true", networkingSource);
+        Assert.DoesNotContain("WslMirroredNetworkingConsent = false", source);
+        Assert.DoesNotContain("new ContentDialog", source);
         Assert.Contains("bytes / (1024d * 1024d * 1024d)", source);
         Assert.Contains("GiB", source);
-        Assert.Contains("loads on first request", source);
+        Assert.Contains("Onboarding_V2_EngineDownload", source);
         Assert.DoesNotContain("full CUDA offload", source);
         Assert.DoesNotContain("LocalAiSettingsDetailText", xaml);
         Assert.Contains("SetLocalAiOptionAvailability(isAvailable: false)", source);
@@ -197,9 +222,9 @@ public sealed class LocalAiSetupUxContractTests
         Assert.DoesNotContain("_config!.LocalAi.Enabled = false;", probeUnknownMethod);
         Assert.DoesNotContain("_config.SkipWizard = _skipWizardWithoutLocalAi;", probeUnknownMethod);
 
-        Assert.Contains("Text=\"Local AI\"", xaml);
+        Assert.Contains("Header=\"Local AI\"", xaml);
         Assert.Contains(
-            "Install Local AI and an optimized model.",
+            "Optional managed llama-server for Windows.",
             xaml);
         Assert.DoesNotContain("Local AI on this PC", xaml);
         Assert.DoesNotContain("Downloads begin only after", xaml);
@@ -219,32 +244,31 @@ public sealed class LocalAiSetupUxContractTests
     public void CapabilitiesReview_InstallDistroCard_UsesSimplifiedCopy()
     {
         string root = TestRepositoryPaths.GetRepositoryRoot();
-        string xaml = File.ReadAllText(Path.Combine(
-            root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml"));
-
-        Assert.Contains(
-            "<TextBlock x:Name=\"InstallDistroTitleText\" Text=\"Install Ubuntu 24.04 in WSL\"",
-            xaml);
-        Assert.Contains("Text=\"Creates a separate OpenClawGateway instance. Uses several GB.\"", xaml);
-        Assert.DoesNotContain("Install an isolated", xaml);
-        Assert.DoesNotContain("Separate from any Linux distributions you already have", xaml);
+        string source = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine.UI", "Pages", "GatewaySetupPage.xaml.cs"));
+        Assert.Contains("DistroCard.Header = summary.DistroTitle", source);
+        Assert.Contains("DistroCard.Description = summary.DistroDescription", source);
+        Assert.Contains("SetupReviewSummaryBuilder.Build", source);
     }
 
     /// <summary>
-    /// The "is Local AI unavailable" gate and the recommended/selected model must be decided
-    /// from device-level eligibility (the best catalog model this hardware can run), not from
-    /// the currently configured SelectedModelId. A stale/removed model, or one that exists but
-    /// this hardware cannot run at all, must be reconciled to a valid one instead of making an
-    /// otherwise-capable device look unavailable or leaving setup on a known-incompatible model.
-    /// A merely busy GPU (EligibleButBusy) is not reconciled away: CanInstall covers that case
+    /// The recommended model must be decided from device-level eligibility (the best catalog
+    /// model this hardware can run), not from the currently configured SelectedModelId. A
+    /// stale/removed model, or one that exists but this hardware cannot run at all, must be
+    /// reconciled to a valid one instead of leaving setup on a known-incompatible model. A
+    /// merely busy GPU (EligibleButBusy) is not reconciled away: CanInstall covers that case
     /// and the same model would still work once the GPU frees up.
+    ///
+    /// The "is Local AI unavailable" gate additionally honours an already configured model.
+    /// A SKU with no recommended default (RTX Spark 32 GB) is a statement about what to
+    /// install by default, not about what the device can run, so a configured selection that
+    /// still passes the capacity fit-test keeps Local AI available on a setup rerun.
     /// </summary>
     [Fact]
     public void CapabilitiesReview_GatesOnDeviceEligibilityAndReconcilesStaleSelectedModel()
     {
         string root = TestRepositoryPaths.GetRepositoryRoot();
         string source = File.ReadAllText(Path.Combine(
-            root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml.cs"));
+            root, "src", "OpenClaw.SetupEngine.UI", "Controls", "LocalAiSetupControl.xaml.cs"));
         // "InitializeLocalAiReviewAsync" also appears at its earlier call site
         // (AsyncEventHandlerGuard.Run(() => InitializeLocalAiReviewAsync(...))), so search for
         // the method's declaration specifically; otherwise ExtractMethod would grab the body of
@@ -254,15 +278,18 @@ public sealed class LocalAiSetupUxContractTests
         AssertInOrder(
             method,
             "LocalInferenceEligibilityResult deviceEligibility = LocalInferenceEligibility.Evaluate(_localAiHardware);",
-            "if (!deviceEligibility.CanInstall || deviceEligibility.Plan is null || deviceEligibility.SelectedGpu is null)",
-            "hardwareReason = DescribeLocalAiUnavailable(deviceEligibility);",
+            "_localAiRecommendedModelId = deviceEligibility.CanInstall",
+            "LocalInferenceEligibility.EvaluateForConfiguredAvailability(",
+            "_config!.LocalAi.SelectedModelId);",
+            "if (!availability.CanInstall || availability.Plan is null || availability.SelectedGpu is null)",
+            "hardwareReason = DescribeLocalAiUnavailable(availability);",
             "LocalInferenceEligibilityResult selectedEligibility =",
             "LocalInferenceEligibility.Evaluate(_localAiHardware, selectedModelId);",
             "if (_localAiRecoveryModelPinned)",
             "eligibility = selectedEligibility;",
             "else if (!selectedEligibility.CanInstall)",
             "_config.LocalAi.SelectedModelId = null;",
-            "_config.LocalAi.SelectedModelId ??= _localAiRecommendedModelId ?? deviceEligibility.Plan.Model.Id;",
+            "_config.LocalAi.SelectedModelId ??= _localAiRecommendedModelId ?? availability.Plan.Model.Id;",
             "eligibility ??= LocalInferenceEligibility.Evaluate(",
             "_config.LocalAi.SelectedModelId);");
     }
@@ -275,8 +302,8 @@ public sealed class LocalAiSetupUxContractTests
             root,
             "src",
             "OpenClaw.SetupEngine.UI",
-            "Pages",
-            "CapabilitiesPage.xaml"));
+            "Controls",
+            "LocalAiSetupControl.xaml"));
 
         Assert.Contains("x:Uid=\"Onboarding_LocalAi_RecheckAvailabilityButton\"", xaml);
 
@@ -304,9 +331,9 @@ public sealed class LocalAiSetupUxContractTests
     {
         string root = TestRepositoryPaths.GetRepositoryRoot();
         string xaml = File.ReadAllText(Path.Combine(
-            root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml"));
+            root, "src", "OpenClaw.SetupEngine.UI", "Controls", "LocalAiSetupControl.xaml"));
         string source = File.ReadAllText(Path.Combine(
-            root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml.cs"));
+            root, "src", "OpenClaw.SetupEngine.UI", "Controls", "LocalAiSetupControl.xaml.cs"));
 
         Assert.Contains("x:Uid=\"Onboarding_LocalAi_UnavailableDetailsButton\"", xaml);
 
@@ -322,8 +349,6 @@ public sealed class LocalAiSetupUxContractTests
             "SetupLocalization.GetString(\"Onboarding_LocalAi_UnavailableMessage\")",
             "SetupLocalization.GetString(\"Onboarding_LocalAi_UnavailableHelpText\")",
             "SetupLocalization.GetString(\"Onboarding_LocalAi_ProbeFailureReason\")",
-            "SetupLocalization.GetString(\"Onboarding_LocalAi_UnavailableDetailsDialogTitle\")",
-            "SetupLocalization.GetString(\"Onboarding_LocalAi_UnavailableDetailsDialogClose\")",
             "SetupLocalization.GetString(\"Onboarding_LocalAi_WslConfigReadFailureReason\")",
         ];
         foreach (string call in setupResourceCalls)
@@ -376,7 +401,7 @@ public sealed class LocalAiSetupUxContractTests
         string diagnostics = File.ReadAllText(Path.Combine(
             root, "src", "OpenClaw.Shared", "Inference", "Catalog", "LocalInferenceEligibilityDiagnostics.cs"));
         string setupSource = File.ReadAllText(Path.Combine(
-            root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml.cs"));
+            root, "src", "OpenClaw.SetupEngine.UI", "Controls", "LocalAiSetupControl.xaml.cs"));
         string viewModelSource = File.ReadAllText(Path.Combine(
             root, "src", "OpenClaw.Tray.WinUI", "Presentation", "LocalAiPageViewModel.cs"));
         string hubPageSource = File.ReadAllText(Path.Combine(
@@ -426,24 +451,6 @@ public sealed class LocalAiSetupUxContractTests
             foreach (string key in reasonKeys)
                 Assert.Contains($"\"{key}\"", resources);
         }
-    }
-
-    [Fact]
-    public void SetupWindow_LocalAiHardwareProbeCache_CanRefreshAfterFault()
-    {
-        string root = TestRepositoryPaths.GetRepositoryRoot();
-        string source = File.ReadAllText(Path.Combine(
-            root,
-            "src",
-            "OpenClaw.SetupEngine.UI",
-            "SetupWindow.xaml.cs"));
-        string method = ExtractMethod(source, "GetLocalAiHardwareAsync");
-
-        Assert.Contains("bool forceRefresh = false", method);
-        Assert.Contains("forceRefresh ||", method);
-        Assert.Contains("_localAiHardwareProbeTask.IsFaulted", method);
-        Assert.Contains("_localAiHardwareProbeTask.IsCanceled", method);
-        Assert.Contains("_localAiHardwareProbeTask = Task.Run", method);
     }
 
     [Fact]
@@ -567,7 +574,7 @@ public sealed class LocalAiSetupUxContractTests
     {
         string root = TestRepositoryPaths.GetRepositoryRoot();
         string source = File.ReadAllText(Path.Combine(
-            root, "src", "OpenClaw.SetupEngine.UI", "Pages", "CapabilitiesPage.xaml.cs"));
+            root, "src", "OpenClaw.SetupEngine.UI", "Controls", "LocalAiSetupControl.xaml.cs"));
 
         // SetLocalAiOptionAvailability(isAvailable: false) sets LocalAiOptionContent's
         // IsHitTestVisible to false, which blocks pointer input for its whole subtree regardless
@@ -591,16 +598,12 @@ public sealed class LocalAiSetupUxContractTests
             "SetLocalAiOptionAvailability(",
             "RestoreLocalAiToggleAsPendingStateEscapeHatch();");
 
-        // Continue's gate must not special-case pending availability: it only ever short-circuits
-        // on the toggle being off, or requires a fully resolved, eligible, consented state.
-        string primaryButtonMethod = ExtractMethod(source, "private void UpdatePrimaryButtonState");
-        Assert.DoesNotContain("_localAiAvailability", primaryButtonMethod);
-        Assert.Contains(
-            "(!_localAiRecoveryOnly && LocalAiToggle.IsOn != true) ||",
-            primaryButtonMethod);
-        Assert.Contains(
-            "(LocalAiToggle.IsOn == true &&\r\n             _localAiSelectionEligible &&\r\n             (!_localAiNetworkingConsentRequired || LocalAiNetworkingConsentCheckBox.IsChecked == true));",
-            primaryButtonMethod);
+        string draft = File.ReadAllText(Path.Combine(root, "src", "OpenClaw.SetupEngine", "SetupAccessDraft.cs"));
+        Assert.Contains("CanInstall(bool localAiRecovery = false) => GetInstallRequirements(localAiRecovery).Count == 0", draft);
+        Assert.Contains("Config.LocalAi.Enabled && !LocalAiReady", draft);
+        Assert.Contains("Config.LocalAi.Enabled && LocalAiNetworkingConsentRequired && !Config.LocalAi.WslMirroredNetworkingConsent", draft);
+        Assert.Contains("localAiRecovery && !Config.LocalAi.Enabled", draft);
+        Assert.DoesNotContain("LocalAi.Enabled = false", source);
     }
 
     /// <summary>
